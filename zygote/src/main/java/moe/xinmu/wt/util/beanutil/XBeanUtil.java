@@ -1,4 +1,4 @@
-package moe.xinmu.wt.util;
+package moe.xinmu.wt.util.beanutil;
 
 import com.google.common.collect.Maps;
 import lombok.AllArgsConstructor;
