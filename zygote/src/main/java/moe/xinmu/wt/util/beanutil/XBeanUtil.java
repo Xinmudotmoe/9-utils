@@ -18,7 +18,6 @@ import java.security.AccessController;
 import java.security.PrivilegedExceptionAction;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 /**
  * 基于字节码生成器的BeanUtil
@@ -39,6 +38,18 @@ public class XBeanUtil {
     public final static int FALSE = 0;
     public final static int TRUE = 1;
     public static final int ZERO = 0;
+
+    /**
+     * 获取转换器
+     *
+     * @param tClass 源类型
+     * @param <T>    源类型
+     * @return 转换器
+     */
+    @SuppressWarnings("all")
+    public static <T> IBeanHandler<T> getHandler(Class<T> tClass) {
+        return (IBeanHandler<T>) BEAN_HANDLER_MAP.get(tClass);
+    }
 
     /**
      * Bean初始化 兼容原始方案
@@ -212,6 +223,8 @@ public class XBeanUtil {
          */
 
         T cast(Map<String, ?> map, T t);
+
+        String getLog();
     }
 
     private static void genConstructor(ClassWriter cw) {
@@ -223,7 +236,7 @@ public class XBeanUtil {
         constructor.endMethod();
     }
 
-    private static void genConstruct(ClassWriter cw, String name, Type tType, Class<?> clazz) {
+    private static void genConstruct(ClassWriter cw, String name, Type tType, Class<?> clazz, StringJoiner log) {
         String constructDescriptor = "()" + Type.getDescriptor(clazz);
         /*gen Transformer Method*/
         MethodVisitor construct = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_BRIDGE | Opcodes.ACC_SYNTHETIC, "construct",
@@ -253,11 +266,12 @@ public class XBeanUtil {
             constructAdapter.invokeConstructor(tType, OBJECT_CONSTRUCTOR);
             constructAdapter.returnValue();
         }
+        log.add("parameter less = " + !notHasParameterLess);
         constructAdapter.endMethod();
         /*gen Construct Method End*/
     }
 
-    private static void genInit(ClassWriter cw, String name, Type tType, Class<?> clazz) {
+    private static void genInit(ClassWriter cw, String name, Type tType, Class<?> clazz, StringJoiner log) {
         String initDescriptor = "(" + tType + ")" + tType;
         /*gen Initialization Transformer*/
         MethodVisitor init = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_BRIDGE | Opcodes.ACC_SYNTHETIC, "init",
@@ -331,6 +345,7 @@ public class XBeanUtil {
                             initAdapter.pop();
                             initAdapter.visitLabel(l3);
                         }
+                        log.add("found init method = " + register.methodName);
                     } catch (Exception e) {
                         e.printStackTrace();
                     }
@@ -346,7 +361,7 @@ public class XBeanUtil {
         initAdapter.endMethod();
     }
 
-    private static void genCast(ClassWriter cw, String name, Type tType, Class<?> clazz, List<PropertyDescriptor> propertyDescriptors) {
+    private static void genCast(ClassWriter cw, String name, Type tType, Class<?> clazz, List<PropertyDescriptor> propertyDescriptors, StringJoiner log) {
         String castFromMapDescriptor = "(Ljava/util/Map;" + tType + ")Ljava/lang/Object;";
         /*gen Transformer Method*/
         MethodVisitor castFromObject = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_BRIDGE | Opcodes.ACC_SYNTHETIC, "cast",
@@ -416,6 +431,7 @@ public class XBeanUtil {
                 castFromObjectAdapter.invokeVirtual(HASH_MAP_TYPE, new org.objectweb.asm.commons.Method("put",
                         "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;"));
                 castFromObjectAdapter.pop();
+                log.add("found get = " + propertyDescriptor.getName());
             } catch (Exception ignored) {
             }
             try {
@@ -447,6 +463,7 @@ public class XBeanUtil {
                 castFromMapAdapter.catchException(label, label1, Type.getType(Exception.class));
                 castFromMapAdapter.pop();
                 castFromMapAdapter.visitLabel(over);
+                log.add("found set = " + propertyDescriptor.getName());
             } catch (Exception ignored) {
 
             }
@@ -463,6 +480,7 @@ public class XBeanUtil {
     private static AtomicInteger autoincrementId = new AtomicInteger();
 
     private static <T> IBeanHandler<?> genConvert(Class<T> tClass) {
+        StringJoiner log = new StringJoiner("\n");
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
         String name = XBeanUtil.class.getName().replace('.', '/') + "$IBeanHandler"
                 + autoincrementId.getAndAdd(1) + "/_" + tClass.getSimpleName();
@@ -474,18 +492,17 @@ public class XBeanUtil {
         List<PropertyDescriptor> descriptorList;
         try {
             BeanInfo beanInfo = Introspector.getBeanInfo(tClass, Object.class);
-            descriptorList = Arrays.stream(beanInfo.getPropertyDescriptors())
-                    .filter(d -> Objects.nonNull(d.getWriteMethod()))
-                    .filter(d -> Objects.nonNull(d.getReadMethod()))
-                    .collect(Collectors.toList());
+            descriptorList = Arrays.asList(beanInfo.getPropertyDescriptors());
         } catch (IntrospectionException e) {
             e.printStackTrace();
             return null;
         }
+        log.add("found descriptor = " + descriptorList);
         genConstructor(cw);
-        genConstruct(cw, name, tType, tClass);
-        genInit(cw, name, tType, tClass);
-        genCast(cw, name, tType, tClass, descriptorList);
+        genConstruct(cw, name, tType, tClass, log);
+        genInit(cw, name, tType, tClass, log);
+        genCast(cw, name, tType, tClass, descriptorList, log);
+        genLog(cw, log.toString());
         cw.visitEnd();
 
         byte[] bytes = cw.toByteArray();
@@ -499,6 +516,15 @@ public class XBeanUtil {
             e.printStackTrace();
         }
         return null;
+    }
+
+    private static void genLog(ClassWriter cw, String log) {
+        final GeneratorAdapter constructor = new GeneratorAdapter(cw.visitMethod(Opcodes.ACC_PUBLIC, "getLog",
+                "()Ljava/lang/String;", null, null), Opcodes.ACC_PUBLIC, "getLog", "()Ljava/lang/String;");
+        constructor.loadThis();
+        constructor.push(log);
+        constructor.returnValue();
+        constructor.endMethod();
     }
 
 
@@ -637,7 +663,7 @@ public class XBeanUtil {
             adapter.loadLocal(local1);
             adapter.invokeConstructor(Type.getType(Date.class), new org.objectweb.asm.commons.Method("<init>", "(J)V"));
         });
-        
+
         ArrayList<ExceptionInterceptionRunnable> runnables = new ArrayList<>();
         runnables.add(() -> INIT_REGISTERS.add(new LoadSetMethodRegister<>(XBeanUtil.loadSetMethodName("isPublish"), int.class, new GetStaticFieldProcess<>(XBeanUtil.class.getField("TRUE")))));
         runnables.add(() -> INIT_REGISTERS.add(new LoadSetMethodRegister<>(XBeanUtil.loadSetMethodName("isDelete"), int.class, new GetStaticFieldProcess<>(XBeanUtil.class.getField("FALSE")))));
@@ -680,6 +706,5 @@ public class XBeanUtil {
     public static String uuid() {
         return UUID.randomUUID().toString().replaceAll("-", "").toUpperCase();
     }
-
 
 }
