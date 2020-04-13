@@ -26,6 +26,7 @@ public class WebP {
         buffer.order(ByteOrder.BIG_ENDIAN);
         eqTest(buffer.getInt(), WEBP_MAGIC);
         eqTest(buffer.getInt(), VP8__MAGIC);
+        
         buffer.order(ByteOrder.LITTLE_ENDIAN);
         int chunkSize = buffer.getInt();
         buffer.position(buffer.position() + 3);

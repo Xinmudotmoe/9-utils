@@ -1,20 +1,17 @@
 package moe.xinmu.wt.util.customform;
 
 import com.google.common.collect.Lists;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.SneakyThrows;
+import moe.xinmu.wt.util.customform.beans.ConstantType;
 import moe.xinmu.wt.util.customform.beans.MetaConstant;
 import moe.xinmu.wt.util.customform.beans.MetaInformation;
 import moe.xinmu.wt.util.customform.beans.MetaType;
-import moe.xinmu.wt.util.customform.beans.ConstantType;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.UnpooledByteBufAllocator;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
@@ -22,13 +19,28 @@ import java.util.stream.LongStream;
 
 /**
  * 自定义表单相关工具
+ *
+ * @author Xinmu
  */
 @NoArgsConstructor
-@AllArgsConstructor
 public class CustomForm {
     @Getter
-    MetaInformation information = new MetaInformation();
+    private MetaInformation information = new MetaInformation();
 
+    /**
+     * 此方法用于从填报数据头转换为元信息
+     *
+     * @param information 元信息对象
+     */
+    public CustomForm(MetaInformation information) {
+        this.information = information;
+    }
+
+    /**
+     * 通过字节数据获取元信息
+     *
+     * @param bytes 字节数据
+     */
     public void readMetaBytes(byte[] bytes) {
         ByteBuffer buffer = ByteBuffer.wrap(bytes);
         information.setVersion(buffer.get());
@@ -53,55 +65,70 @@ public class CustomForm {
         }
     }
 
-    @SneakyThrows
+    /**
+     * 将元信息写回到字节数据
+     */
     public byte[] writeMetaBytes() {
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        DataOutputStream os = new DataOutputStream(outputStream);
-        os.write(information.getVersion());
-        os.writeInt(information.getConstantList().size());
+        ByteBuf buf = UnpooledByteBufAllocator.DEFAULT.heapBuffer();
+        buf.writeByte(information.getVersion());
+        buf.writeInt(information.getConstantList().size());
         for (MetaConstant constant : information.getConstantList()) {
-            outputStream.write((byte) constant.getType().ordinal());
+            buf.writeByte((byte) constant.getType().ordinal());
             byte[] nameBuffer = constant.getName().getBytes(StandardCharsets.UTF_8);
-            os.writeInt(nameBuffer.length);
-            os.write(nameBuffer);
-            os.writeInt(constant.getWidth());
+            buf.writeInt(nameBuffer.length);
+            buf.writeBytes(nameBuffer);
+            buf.writeInt(constant.getWidth());
         }
-        return outputStream.toByteArray();
+        byte[] bytes = new byte[buf.writerIndex()];
+        buf.getBytes(0, bytes, 0, buf.writerIndex());
+        return bytes;
     }
 
-    @SneakyThrows
+    /**
+     * 生成归档信息
+     *
+     * @param data 数据源
+     * @return 字节数据
+     */
     public byte[] genDataBytes(List<String> data) {
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        DataOutputStream os = new DataOutputStream(outputStream);
+        ByteBuf buf = UnpooledByteBufAllocator.DEFAULT.heapBuffer();
         for (int i = 0; i < information.getConstantList().size(); i++) {
             String d = data.get(i);
             switch (information.getConstantList().get(i).getType()) {
                 case NUMBER:
-                    os.write(ConstantType.NUMBER.ordinal());
+                    buf.writeByte(ConstantType.NUMBER.ordinal());
                     if (Objects.isNull(d) || d.isEmpty()) {
-                        os.writeLong(0);
+                        buf.writeLong(0);
                     } else {
-                        os.writeLong(Long.decode(d));
+                        buf.writeLong(Long.decode(d));
                     }
                     break;
                 case STRING:
                     if (Objects.isNull(d)) {
-                        os.write(ConstantType.NULL.ordinal());
+                        buf.writeByte(ConstantType.NULL.ordinal());
                     } else {
-                        os.write(ConstantType.STRING.ordinal());
+                        buf.writeByte(ConstantType.STRING.ordinal());
                         byte[] sdata = d.getBytes(StandardCharsets.UTF_8);
-                        os.writeInt(sdata.length);
-                        os.write(sdata);
+                        buf.writeInt(sdata.length);
+                        buf.writeBytes(sdata);
                     }
                     break;
                 default:
                     throw new RuntimeException("Unsupport.");
             }
         }
-        return outputStream.toByteArray();
+        byte[] bytes = new byte[buf.writerIndex()];
+        buf.getBytes(0, bytes, 0, buf.writerIndex());
+        return bytes;
     }
 
-    @SneakyThrows
+
+    /**
+     * 解析归档信息
+     *
+     * @param data 字节数据
+     * @return 解析数据
+     */
     public List<Object> parseDataBytes(byte[] data) {
         List<Object> objects = Lists.newArrayList();
         if (Objects.isNull(data) || data.length == 0) {
@@ -118,9 +145,10 @@ public class CustomForm {
                 }
             }
         } else {
-            DataInputStream in = new DataInputStream(new ByteArrayInputStream(data));
+            ByteBuffer buffer = ByteBuffer.wrap(data);
+            buffer.order(ByteOrder.BIG_ENDIAN);
             for (MetaConstant constant : information.getConstantList()) {
-                ConstantType type = ConstantType.values()[in.read()];
+                ConstantType type = ConstantType.values()[buffer.get()];
                 switch (constant.getType()) {
                     case STRING:
                         switch (type) {
@@ -128,10 +156,10 @@ public class CustomForm {
                                 objects.add(null);
                                 break;
                             case STRING:
-                                int length = in.readInt();
-                                byte[] buffer = new byte[length];
-                                in.read(buffer);
-                                objects.add(new String(buffer, StandardCharsets.UTF_8));
+                                int length = buffer.getInt();
+                                byte[] stringBuffer = new byte[length];
+                                buffer.get(stringBuffer);
+                                objects.add(new String(stringBuffer, StandardCharsets.UTF_8));
                                 break;
                             default:
                                 throw new RuntimeException();
@@ -141,7 +169,7 @@ public class CustomForm {
                         if (type != ConstantType.NUMBER) {
                             throw new RuntimeException();
                         }
-                        objects.add(in.readLong());
+                        objects.add(buffer.getLong());
                         break;
                     default:
                         throw new RuntimeException("");
@@ -151,6 +179,12 @@ public class CustomForm {
         return objects;
     }
 
+    /**
+     * 解析归档信息 并生成统计信息
+     *
+     * @param source 源字节数据列表
+     * @return 解析数据列表
+     */
     public List<List<Object>> parseDataAndStatistics(List<byte[]> source) {
         List<List<Object>> target = Lists.newArrayList();
         source.forEach(bytes -> target.add(parseDataBytes(bytes)));
