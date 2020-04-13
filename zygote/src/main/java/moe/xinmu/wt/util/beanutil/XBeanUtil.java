@@ -416,10 +416,7 @@ public class XBeanUtil {
         for (PropertyDescriptor propertyDescriptor : propertyDescriptors) {
             try {
                 Method get = propertyDescriptor.getReadMethod();
-                if (get.getExceptionTypes().length > 0) {
-                    //Do not use break
-                    throw new Exception();
-                }
+                Objects.requireNonNull(get);
                 castFromObjectAdapter.loadLocal(mapLab);
                 castFromObjectAdapter.push(propertyDescriptor.getName());
                 castFromObjectAdapter.loadArg(0);
@@ -437,6 +434,7 @@ public class XBeanUtil {
             try {
                 //TODO Election Method
                 Method setter = propertyDescriptor.getWriteMethod();
+                Objects.requireNonNull(setter);
                 castFromMapAdapter.loadArg(0);
                 castFromMapAdapter.push(propertyDescriptor.getName());
                 castFromMapAdapter.invokeInterface(Type.getType(Map.class),
