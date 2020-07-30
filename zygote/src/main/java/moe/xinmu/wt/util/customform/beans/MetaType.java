@@ -11,6 +11,10 @@ public enum MetaType {
     /**
      * 整数类型
      */
-    NUMBER
+    NUMBER,
+    /**
+     * 单选
+     */
+    RADIO
 }
 

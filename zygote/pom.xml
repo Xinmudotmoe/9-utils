@@ -21,13 +21,14 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
                 <configuration>
-                    <source>1.11</source>
-                    <target>1.11</target>
+                    <source>11</source>
+                    <target>11</target>
                     <encoding>utf-8</encoding>
                 </configuration>
             </plugin>
         </plugins>
     </build>
+
     <dependencies>
         <dependency>
             <groupId>org.ow2.asm</groupId>
@@ -92,6 +93,12 @@
             <artifactId>netty-common</artifactId>
             <version>4.1.33.Final</version>
             <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.jcodec</groupId>
+            <artifactId>jcodec</artifactId>
+            <version>0.1.9</version>
+
         </dependency>
     </dependencies>
 
