@@ -7,6 +7,7 @@ import moe.xinmu.pagehelper.enums.DriverType;
 import moe.xinmu.pagehelper.io.PageIO;
 import moe.xinmu.pagehelper.result.PageResult;
 
+import java.math.BigDecimal;
 import java.sql.*;
 import java.util.Date;
 import java.util.*;
@@ -18,16 +19,35 @@ import java.util.*;
  * @since 2020/09/18
  */
 public class PageHelper {
+    /**
+     * 默认查询超时时间（单位秒）
+     */
+    private static int DEFAULT_QUERY_TIMEOUT = 4;
+
+    public static int getDefaultQueryTimeout() {
+        return DEFAULT_QUERY_TIMEOUT;
+    }
+
+    public static void setDefaultQueryTimeout(int defaultQueryTimeout) {
+        DEFAULT_QUERY_TIMEOUT = defaultQueryTimeout;
+    }
 
     @SneakyThrows
     public static <T> PageResult<T> pagePrepareStatement(PageIO<T> page, Connection connection, String sql, List<Object> parameters, DriverType driverType) {
+        return pagePrepareStatement(page, connection, sql, parameters, driverType, DEFAULT_QUERY_TIMEOUT);
+    }
+
+    @SneakyThrows
+    public static <T> PageResult<T> pagePrepareStatement(PageIO<T> page, Connection connection, String sql, List<Object> parameters, DriverType driverType, Integer queryTimeout) {
         int total;
         PageResult<T> pageResult = new PageResult<>();
         pageResult.setSize(page.getSize());
         pageResult.setPage(page.getPage());
         parameters = new ArrayList<>(parameters);
+
         try (PreparedStatement statement = connection.prepareStatement(genCountSql(sql, driverType), ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY)) {
             putParameters(statement, parameters);
+            statement.setQueryTimeout(queryTimeout);
             try (ResultSet resultSet = statement.executeQuery()) {
                 resultSet.first();
                 total = resultSet.getInt(1);
@@ -51,6 +71,7 @@ public class PageHelper {
 
         try (PreparedStatement statement = connection.prepareStatement(targetSql, ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY)) {
             putParameters(statement, parameters);
+            statement.setQueryTimeout(queryTimeout);
             try (ResultSet resultSet = statement.executeQuery()) {
                 pageSkip(resultSet, page.getOrder(), rangeStart, driverType);
                 for (Map<String, Object> map : analyze(resultSet)) {
@@ -75,7 +96,6 @@ public class PageHelper {
         for (int i = 0; i < metaData.getColumnCount(); i++) {
             int type = metaData.getColumnType(i + 1);
             switch (type) {
-                case Types.BIGINT:
                 case Types.TINYINT:
                     typeList.add(Types.INTEGER);
                     break;
@@ -92,6 +112,7 @@ public class PageHelper {
                 case Types.NUMERIC:
                 case Types.BINARY:
                 case Types.NULL:
+                case Types.BIGINT:
                     typeList.add(type);
                     break;
                 default:
@@ -103,28 +124,31 @@ public class PageHelper {
         while (resultSet.next()) {
             Map<String, Object> map = new HashMap<>();
             for (int j = 0; j < typeList.size(); j++) {
-
-                if (Objects.nonNull(resultSet.getObject(j + 1))) {
+                Object target = null;
+                int jdbcIndex = j + 1;
+                if (Objects.nonNull(resultSet.getObject(jdbcIndex))) {
                     switch (typeList.get(j)) {
+                        case Types.BIGINT:
+                            target = resultSet.getLong(jdbcIndex);
+                            break;
                         case Types.INTEGER:
-                            map.put(typeName.get(j), resultSet.getInt(j + 1));
+                            target = resultSet.getInt(jdbcIndex);
                             break;
                         case Types.VARCHAR:
-                            map.put(typeName.get(j), resultSet.getString(j + 1));
+                            target = resultSet.getString(jdbcIndex);
                             break;
                         case Types.TIMESTAMP:
-                            map.put(typeName.get(j), new Date(resultSet.getTimestamp(j + 1).getTime()));
+                            target = resultSet.getTimestamp(jdbcIndex);
                             break;
                         case Types.NUMERIC:
-                            map.put(typeName.get(j), resultSet.getBigDecimal(j + 1));
+                            target = resultSet.getBigDecimal(jdbcIndex);
                             break;
                         case Types.BINARY:
-                            map.put(typeName.get(j), resultSet.getBytes(j + 1));
+                            target = resultSet.getBytes(jdbcIndex);
                             break;
                     }
-                } else {
-                    map.put(typeName.get(j - 1), null);
                 }
+                map.put(typeName.get(j), target);
             }
             mapList.add(map);
         }
@@ -135,7 +159,15 @@ public class PageHelper {
         int i = 0;
         for (Object o : parameters) {
             if (o == null) {
-                statement.setNull(++i, 0);
+                statement.setNull(++i, Types.NULL);
+            } else if (o instanceof Long) {
+                statement.setLong(++i, (Long) o);
+            } else if (o instanceof Float) {
+                statement.setFloat(++i, (Float) o);
+            } else if (o instanceof Double) {
+                statement.setDouble(++i, (Double) o);
+            } else if (o instanceof BigDecimal) {
+                statement.setBigDecimal(++i, (BigDecimal) o);
             } else if (o instanceof Number) {
                 statement.setInt(++i, ((Number) o).intValue());
             } else if (o instanceof String) {
@@ -168,19 +200,24 @@ public class PageHelper {
             case ORACLE:
                 return String.format("select * from (select pageHelper1.*, ROWNUM pageHelperNum from (%s) pageHelper1 where ROWNUM<=%d order by %s ) pageHelper where pageHelper.pageHelperNum>=%d", sql, rangeEnd, orderBy, rangeStart + 1);
             case MSSQL:
-                return String.format("select * from (%s) pageHelper order by pageHelper.%s OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", sql, orderBy, rangeStart, rangeEnd - rangeStart);
+                return String.format("select TOP %d * from (%s) pageHelper order by pageHelper.%s ", rangeEnd, sql, orderBy);
+//            case MSSQL:
+//                return String.format("select * from (%s) pageHelper order by pageHelper.%s OFFSET %d ROWS FETCH NEXT %d ROWS ONLY", sql, orderBy, rangeStart, rangeEnd - rangeStart);
             default:
                 return String.format("select * from (%s) pageHelper order by %s limit %d, %d", sql, orderBy, rangeStart, rangeEnd - rangeStart);
         }
     }
 
     public static void pageSkip(ResultSet resultSet, String orderBy, Integer rangeStart, DriverType driverType) throws SQLException {
-        switch (driverType) {
-            case MSSQL:
-                if (orderBy == null || orderBy.equals("")) {
-                    resultSet.absolute(rangeStart);
-                }
-                break;
+        if (driverType == DriverType.MSSQL) {
+            resultSet.absolute(rangeStart);
         }
+//        switch (driverType) {
+//            case MSSQL:
+//                if (orderBy == null || orderBy.equals("")) {
+//                    resultSet.absolute(rangeStart);
+//                }
+//                break;
+//        }
     }
 }

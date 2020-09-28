@@ -5,6 +5,7 @@ import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
+import java.net.URLClassLoader;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
@@ -23,8 +24,10 @@ public class BusyBeanUtils {
 
     static {
         // TODO 单步路径式查询支持
-        addCastProcess(Integer.class, Long.class, Integer::longValue);
+        addCastProcess(Integer.class, Long.class, Number::longValue);
+        addCastProcess(Long.class, Integer.class, Number::intValue);
         addCastProcess(Date.class, LocalDateTime.class, date -> date.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
+        addCastProcess(java.sql.Timestamp.class, LocalDateTime.class, date -> date.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
         addCastProcess(BigDecimal.class, Integer.class, BigDecimal::intValue);
         addCastProcess(BigDecimal.class, Long.class, BigDecimal::longValue);
         addCastProcess(BigDecimal.class, Double.class, BigDecimal::doubleValue);
@@ -118,10 +121,10 @@ public class BusyBeanUtils {
         }
         for (Map.Entry<String, Object> entry : map.entrySet()) {
             String fieldName;
-            if ((flag & BeanFlags.DISABLE_CASE) == 0) {
-                fieldName = underScoreCaseToCamelCase(entry.getKey());
-            } else {
+            if ((flag & BeanFlags.DISABLE_CASE) != 0) {
                 fieldName = entry.getKey();
+            } else {
+                fieldName = underScoreCaseToCamelCase(entry.getKey());
             }
             if ((flag & BeanFlags.IGNORE_CASE) != 0) {
                 fieldName = ignoreKeyNameMap.getOrDefault(fieldName.toLowerCase(), fieldName);
