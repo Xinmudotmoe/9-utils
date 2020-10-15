@@ -187,7 +187,7 @@ public class PageHelper {
     static String genRangeSql(String sql, Integer rangeStart, Integer rangeEnd, DriverType driverType, List<Object> parameters) {
         switch (driverType) {
             case ORACLE:
-                return String.format("select * from (select pageHelper1.*, ROWNUM pageHelperNum from(%s) pageHelper1  where ROWNUM<=%d ) pageHelper where ROWNUM>=%d", sql, rangeEnd, rangeStart + 1);
+                return String.format("select * from (select pageHelper1.*, ROWNUM pageHelperNum from(%s) pageHelper1  where ROWNUM<=%d ) pageHelper where pageHelper.pageHelperNum>=%d", sql, rangeEnd, rangeStart + 1);
             case MSSQL:
                 return String.format("select TOP %d * from (%s) pageHelper", rangeEnd, sql);
             default:

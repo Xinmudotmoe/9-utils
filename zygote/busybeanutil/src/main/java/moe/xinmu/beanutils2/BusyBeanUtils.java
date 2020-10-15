@@ -5,7 +5,6 @@ import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
-import java.net.URLClassLoader;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.*;
@@ -20,6 +19,7 @@ import java.util.function.Function;
  */
 public class BusyBeanUtils {
     static final Map<Class<?>, BeanContext<?>> CONTEXT_MAP = new HashMap<>();
+    static final Map<Class<?>, Function<?, ?>> ANY_CONVERSION_CAST_PROCESS_MAP = new HashMap<>();
     static final Map<SimpleDoubleKey<Class<?>, Class<?>>, Function<?, ?>> CAST_PROCESS_MAP = new HashMap<>();
 
     static {
@@ -32,6 +32,8 @@ public class BusyBeanUtils {
         addCastProcess(BigDecimal.class, Long.class, BigDecimal::longValue);
         addCastProcess(BigDecimal.class, Double.class, BigDecimal::doubleValue);
         addCastProcess(BigDecimal.class, Float.class, BigDecimal::floatValue);
+        addAnyConversionCastProcess(String.class, String::valueOf);
+        addAnyConversionCastProcess(Object.class, value -> value);
 //        addCastProcess(java.sql.Date.class, LocalDateTime.class, date -> new Date(date.getTime()).toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
 //        addCastProcess(java.sql.Time.class, LocalDateTime.class, date -> new Date(date.getTime()).toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
 //        addCastProcess(java.sql.Timestamp.class, LocalDateTime.class, date -> new Date(date.getTime()).toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
@@ -39,6 +41,10 @@ public class BusyBeanUtils {
 
     public static <A, B> void addCastProcess(Class<A> aClass, Class<B> bClass, Function<A, B> function) {
         CAST_PROCESS_MAP.put(new SimpleDoubleKey<>(aClass, bClass), function);
+    }
+
+    public static <A> void addAnyConversionCastProcess(Class<A> aClass, Function<Object, A> function) {
+        ANY_CONVERSION_CAST_PROCESS_MAP.put(aClass, function);
     }
 
     public static <T> BeanContext<T> genBeanContext(Class<T> tClass) {
@@ -120,6 +126,9 @@ public class BusyBeanUtils {
             }
         }
         for (Map.Entry<String, Object> entry : map.entrySet()) {
+            if (entry.getValue() == null) {
+                continue;
+            }
             String fieldName;
             if ((flag & BeanFlags.DISABLE_CASE) != 0) {
                 fieldName = entry.getKey();
@@ -131,19 +140,32 @@ public class BusyBeanUtils {
             }
             BiConsumer<T, Object> consumer = (BiConsumer<T, Object>) context.getSetters()
                     .get(fieldName);
-            if (consumer != null && entry.getValue() != null) {
+            if (consumer == null) {
+                continue;
+            }
+            Class<?> needType = context.getSetterTypes().get(fieldName);
+            if (entry.getValue() != null) {
                 Object object = entry.getValue();
-                Class<?> needType = context.getSetterTypes().get(fieldName);
-
+                boolean checked = false;
                 if (!needType.isAssignableFrom(object.getClass())) {
                     SimpleDoubleKey<Class<?>, Class<?>> classSimpleDoubleKey = new SimpleDoubleKey<>(object.getClass(), needType);
                     Function<Object, ?> caster = (Function<Object, ?>) CAST_PROCESS_MAP.get(classSimpleDoubleKey);
-                    if (caster == null) {
-                        continue;
+                    if (caster != null) {
+                        checked = true;
+                        object = caster.apply(object);
                     }
-                    object = caster.apply(object);
+                } else {
+                    checked = true;
+                }
+                if (!checked) {
+                    Function<Object, ?> caster = (Function<Object, ?>) ANY_CONVERSION_CAST_PROCESS_MAP.get(needType);
+                    if (caster != null) {
+                        object = caster.apply(object);
+                    }
                 }
                 consumer.accept(target, object);
+            } else {
+                consumer.accept(target, null);
             }
         }
         return target;
